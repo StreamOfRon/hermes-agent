@@ -440,8 +440,20 @@ DEFAULT_CONFIG = {
         "wrap_response": True,
     },
 
+    # Web tools configuration — granular search/extract backend selection
+    "web": {
+        "backend": "",           # Fallback for both search and extract (empty = not set)
+        "search": {
+            "backend": "",       # Override for web_search_tool (parallel, firecrawl, tavily, searxng)
+            "url": "",           # Required for searxng backend (e.g., https://searx.example.com/search?q=%s&format=json)
+        },
+        "extract": {
+            "backend": "",       # Override for web_extract_tool (parallel, firecrawl, tavily, native)
+        },
+    },
+
     # Config schema version - bump this when adding new required fields
-    "_config_version": 10,
+    "_config_version": 11,
 }
 
 # =============================================================================
@@ -456,6 +468,7 @@ ENV_VARS_BY_VERSION: Dict[int, List[str]] = {
     5: ["WHATSAPP_ENABLED", "WHATSAPP_MODE", "WHATSAPP_ALLOWED_USERS",
         "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_ALLOWED_USERS"],
     10: ["TAVILY_API_KEY"],
+    11: ["SEARXNG_API_KEY"],
 }
 
 # Required environment variables with metadata for migration prompts.
@@ -681,6 +694,23 @@ OPTIONAL_ENV_VARS = {
         "tools": ["web_search", "web_extract", "web_crawl"],
         "password": True,
         "category": "tool",
+    },
+    "SEARXNG_URL": {
+        "description": "SearXNG instance search URL with %s placeholder (e.g., https://searx.example.com/search?q=%s&format=json)",
+        "prompt": "SearXNG search URL (with %s for query)",
+        "url": None,
+        "password": False,
+        "category": "tool",
+        "tools": ["web_search"],
+    },
+    "SEARXNG_API_KEY": {
+        "description": "Optional API key for authenticated SearXNG instances",
+        "prompt": "SearXNG API key (leave empty for public instances)",
+        "url": None,
+        "password": True,
+        "category": "tool",
+        "tools": ["web_search"],
+        "advanced": True,
     },
     "BROWSERBASE_API_KEY": {
         "description": "Browserbase API key for cloud browser (optional — local browser works without this)",
@@ -1147,6 +1177,41 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
                     print("  ✓ Cleared ANTHROPIC_TOKEN from .env (no longer used)")
         except Exception:
             pass
+
+    # ── Version 10 → 11: split web.backend into web.search.backend + web.extract.backend ──
+    if current_ver < 11:
+        config = load_config()
+        web = config.get("web", {})
+        old_backend = web.get("backend", "").strip()
+        changed = False
+
+        if old_backend:
+            search_cfg = web.setdefault("search", {})
+            extract_cfg = web.setdefault("extract", {})
+
+            # Copy to per-tool if not already set
+            if not search_cfg.get("backend"):
+                search_cfg["backend"] = old_backend
+                changed = True
+            if not extract_cfg.get("backend"):
+                extract_cfg["backend"] = old_backend if old_backend != "searxng" else ""
+                changed = True
+
+            # If old backend was searxng, prompt for search URL
+            if old_backend == "searxng" and not search_cfg.get("url"):
+                if interactive and not quiet:
+                    print("\n  SearXNG backend detected. The new schema requires a full URL template.")
+                    print("  Example: https://searx.example.com/search?q=%s&format=json")
+                    url = input("  SearXNG search URL (with %s placeholder): ").strip()
+                    if url:
+                        search_cfg["url"] = url
+                        changed = True
+
+        if changed:
+            config["web"] = web
+            save_config(config)
+            if not quiet:
+                print("  ✓ Migrated web.backend to web.search.backend / web.extract.backend")
 
     if current_ver < latest_ver and not quiet:
         print(f"Config version: {current_ver} → {latest_ver}")

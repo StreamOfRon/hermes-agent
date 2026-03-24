@@ -92,6 +92,74 @@ def _get_backend() -> str:
     # Default to firecrawl (backward compat, or when both are set)
     return "firecrawl"
 
+
+# ─── Granular Backend Selection ───────────────────────────────────────────────
+
+_VALID_SEARCH_BACKENDS = {"parallel", "firecrawl", "tavily", "searxng"}
+_VALID_EXTRACT_BACKENDS = {"parallel", "firecrawl", "tavily", "native"}
+
+
+def _get_search_backend() -> str:
+    """Determine which web search backend to use.
+    
+    Precedence (highest to lowest):
+    1. Tool-specific config: web.search.backend
+    2. Generic config: web.backend
+    3. Environment variable fallback (legacy)
+    4. Default: firecrawl
+    """
+    web = _load_web_config()
+    
+    # 1. Tool-specific config
+    specific = web.get("search", {}).get("backend", "").lower().strip()
+    if specific in _VALID_SEARCH_BACKENDS:
+        return specific
+    
+    # 2. Generic web.backend
+    generic = web.get("backend", "").lower().strip()
+    if generic in _VALID_SEARCH_BACKENDS:
+        return generic
+    
+    # 3. Env fallback (legacy)
+    if _has_env("SEARXNG_URL"):
+        return "searxng"
+    if _has_env("TAVILY_API_KEY") and not _has_env("FIRECRAWL_API_KEY") and not _has_env("PARALLEL_API_KEY"):
+        return "tavily"
+    if _has_env("PARALLEL_API_KEY") and not _has_env("FIRECRAWL_API_KEY"):
+        return "parallel"
+    
+    return "firecrawl"
+
+
+def _get_extract_backend() -> str:
+    """Determine which web extraction backend to use.
+    
+    Precedence (highest to lowest):
+    1. Tool-specific config: web.extract.backend
+    2. Generic config: web.backend
+    3. Environment variable fallback (legacy — same as search, minus searxng)
+    4. Default: firecrawl
+    """
+    web = _load_web_config()
+    
+    # 1. Tool-specific config
+    specific = web.get("extract", {}).get("backend", "").lower().strip()
+    if specific in _VALID_EXTRACT_BACKENDS:
+        return specific
+    
+    # 2. Generic web.backend
+    generic = web.get("backend", "").lower().strip()
+    if generic in _VALID_EXTRACT_BACKENDS:
+        return generic
+    
+    # 3. Env fallback (legacy — same as search, minus searxng)
+    if _has_env("TAVILY_API_KEY") and not _has_env("FIRECRAWL_API_KEY") and not _has_env("PARALLEL_API_KEY"):
+        return "tavily"
+    if _has_env("PARALLEL_API_KEY") and not _has_env("FIRECRAWL_API_KEY"):
+        return "parallel"
+    
+    return "firecrawl"
+
 # ─── Firecrawl Client ────────────────────────────────────────────────────────
 
 _firecrawl_client = None
@@ -243,6 +311,119 @@ def _normalize_tavily_documents(response: dict, fallback_url: str = "") -> List[
             "metadata": {"sourceURL": url_str},
         })
     return documents
+
+
+# ─── SearXNG Search ──────────────────────────────────────────────────────────
+
+def _searxng_search(query: str, limit: int = 5) -> str:
+    """Search using a SearXNG instance.
+    
+    SearXNG is a free, self-hosted metasearch engine. This implementation
+    supports both public and authenticated instances.
+    
+    Args:
+        query (str): The search query
+        limit (int): Maximum number of results to return (default: 5)
+    
+    Returns:
+        str: JSON string containing search results in standard format
+    """
+    web = _load_web_config()
+    
+    # URL: config takes precedence over env var
+    url_template = (
+        web.get("search", {}).get("url", "").strip()
+        or os.getenv("SEARXNG_URL", "").strip()
+    )
+    if not url_template:
+        return json.dumps({
+            "success": False,
+            "error": "SearXNG backend selected but no URL configured. "
+                     "Set web.search.url in config.yaml or SEARXNG_URL env var."
+        })
+    
+    import urllib.parse
+    search_url = url_template.replace("%s", urllib.parse.quote_plus(query))
+    
+    headers = {"Accept": "application/json"}
+    api_key = os.getenv("SEARXNG_API_KEY", "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(search_url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPError as e:
+        return json.dumps({"success": False, "error": f"SearXNG request failed: {e}"})
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"SearXNG error: {e}"})
+    
+    results = data.get("results", [])[:limit]
+    normalized = [
+        {
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "description": r.get("content", ""),
+            "position": i + 1,
+        }
+        for i, r in enumerate(results)
+    ]
+    return json.dumps({"success": True, "data": {"web": normalized}}, ensure_ascii=False)
+
+
+# ─── Native HTTP Extract ─────────────────────────────────────────────────────
+
+async def _native_extract(urls: List[str]) -> List[Dict[str, Any]]:
+    """Extract web pages using plain HTTP requests.
+    
+    Uses requests library to fetch content and html-to-markdown (if available)
+    to convert HTML to markdown. Falls back to crude regex HTML stripping if
+    html-to-markdown is not installed.
+    
+    Args:
+        urls (List[str]): URLs to extract content from
+    
+    Returns:
+        List[Dict[str, Any]]: List of extracted documents with url, title, content, error fields
+    """
+    import requests
+    try:
+        import html_to_markdown
+        _has_html_to_markdown = True
+    except ImportError:
+        _has_html_to_markdown = False
+    
+    results = []
+    for url in urls:
+        try:
+            resp = requests.get(
+                url,
+                headers={
+                    "Accept": "application/json, text/markdown;q=0.9, text/html;q=0.8",
+                    "User-Agent": "Mozilla/5.0 (compatible; HermesAgent/1.0)",
+                },
+                timeout=30,
+                allow_redirects=True,
+            )
+            resp.raise_for_status()
+            ct = resp.headers.get("Content-Type", "").lower()
+            
+            if "application/json" in ct or "text/markdown" in ct:
+                content = resp.text
+            elif _has_html_to_markdown:
+                content = html_to_markdown.convert(resp.text)
+            else:
+                # Fallback: strip tags crudely
+                import re as _re
+                content = _re.sub(r"<[^>]+>", "", resp.text)
+            
+            results.append({"url": url, "title": "", "content": content, "error": None})
+        except Exception as e:
+            results.append({"url": url, "title": "", "content": "", "error": str(e)})
+    
+    return results
 
 
 DEFAULT_MIN_LENGTH_FOR_SUMMARIZATION = 5000
@@ -801,7 +982,7 @@ def web_search_tool(query: str, limit: int = 5) -> str:
     
     Raises:
         Exception: If search fails or API key is not set
-    """
+     """
     debug_call_data = {
         "parameters": {
             "query": query,
@@ -819,7 +1000,17 @@ def web_search_tool(query: str, limit: int = 5) -> str:
             return json.dumps({"error": "Interrupted", "success": False})
 
         # Dispatch to the configured backend
-        backend = _get_backend()
+        backend = _get_search_backend()
+        
+        if backend == "searxng":
+            result_json = _searxng_search(query, limit)
+            result_data = json.loads(result_json)
+            debug_call_data["results_count"] = len(result_data.get("data", {}).get("web", []))
+            debug_call_data["final_response_size"] = len(result_json)
+            _debug.log_call("web_search_tool", debug_call_data)
+            _debug.save()
+            return result_json
+        
         if backend == "parallel":
             response_data = _parallel_search(query, limit)
             debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
@@ -989,9 +1180,11 @@ async def web_extract_tool(
         if not safe_urls:
             results = []
         else:
-            backend = _get_backend()
+            backend = _get_extract_backend()
 
-            if backend == "parallel":
+            if backend == "native":
+                results = await _native_extract(safe_urls)
+            elif backend == "parallel":
                 results = await _parallel_extract(safe_urls)
             elif backend == "exa":
                 results = _exa_extract(safe_urls)
@@ -1665,7 +1858,24 @@ def check_firecrawl_api_key() -> bool:
 
 
 def check_web_api_key() -> bool:
-    """Check if any web backend API key is available (Exa, Parallel, Firecrawl, or Tavily)."""
+    """Check if any web backend is available.
+
+    Returns True if:
+    - Native extract backend is configured (no API key needed)
+    - SearXNG URL is configured (no API key required, but optional)
+    - Any API key is available (Exa, Parallel, Firecrawl, or Tavily)
+    """
+    web = _load_web_config()
+
+    # Native extract never needs an API key
+    if web.get("extract", {}).get("backend") == "native":
+        return True
+
+    # SearXNG needs a URL (no API key required)
+    searxng_url = web.get("search", {}).get("url", "") or os.getenv("SEARXNG_URL", "")
+    if searxng_url:
+        return True
+
     return bool(
         os.getenv("EXA_API_KEY")
         or os.getenv("PARALLEL_API_KEY")

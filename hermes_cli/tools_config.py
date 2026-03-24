@@ -221,6 +221,21 @@ TOOL_CATEGORIES = {
                 ],
             },
             {
+                "name": "SearXNG",
+                "tag": "Free self-hosted search — no API key required",
+                "web_search_backend": "searxng",
+                "requires_url_prompt": True,
+                "env_vars": [
+                    {"key": "SEARXNG_API_KEY", "prompt": "SearXNG API key (leave empty for public instances)", "optional": True},
+                ],
+            },
+            {
+                "name": "Native HTTP (no API key)",
+                "tag": "Direct HTTP — free, no external service needed",
+                "web_extract_backend": "native",
+                "env_vars": [],
+            },
+            {
                 "name": "Firecrawl Self-Hosted",
                 "tag": "Free - run your own instance",
                 "web_backend": "firecrawl",
@@ -848,6 +863,12 @@ def _is_provider_active(provider: dict, config: dict) -> bool:
     if provider.get("web_backend"):
         current = config.get("web", {}).get("backend")
         return current == provider["web_backend"]
+    if provider.get("web_search_backend"):
+        current = config.get("web", {}).get("search", {}).get("backend")
+        return current == provider["web_search_backend"]
+    if provider.get("web_extract_backend"):
+        current = config.get("web", {}).get("extract", {}).get("backend")
+        return current == provider["web_extract_backend"]
     return False
 
 
@@ -885,6 +906,30 @@ def _configure_provider(provider: dict, config: dict):
         config.setdefault("web", {})["backend"] = provider["web_backend"]
         _print_success(f"  Web backend set to: {provider['web_backend']}")
 
+    # Set web search backend (granular) if applicable
+    if provider.get("web_search_backend"):
+        search_cfg = config.setdefault("web", {}).setdefault("search", {})
+        search_cfg["backend"] = provider["web_search_backend"]
+        _print_success(f"  Web search backend set to: {provider['web_search_backend']}")
+
+    # Set web extract backend (granular) if applicable
+    if provider.get("web_extract_backend"):
+        extract_cfg = config.setdefault("web", {}).setdefault("extract", {})
+        extract_cfg["backend"] = provider["web_extract_backend"]
+        _print_success(f"  Web extract backend set to: {provider['web_extract_backend']}")
+
+    # Handle SearXNG URL prompt if needed
+    if provider.get("requires_url_prompt"):
+        search_cfg = config.setdefault("web", {}).setdefault("search", {})
+        if not search_cfg.get("url"):
+            _print_info("  SearXNG requires a search URL")
+            url = _prompt("    SearXNG URL (with %s for query, e.g., https://searx.example.com/search?q=%s&format=json)")
+            if url and url.strip():
+                search_cfg["url"] = url.strip()
+                _print_success("    Saved")
+            else:
+                _print_warning("    Skipped - you'll need to configure this later")
+
     if not env_vars:
         _print_success(f"  {provider['name']} - no configuration needed!")
         return
@@ -898,6 +943,10 @@ def _configure_provider(provider: dict, config: dict):
             # Don't ask to update - this is a new enable flow.
             # Reconfigure is handled separately.
         else:
+            # Skip optional vars that weren't explicitly requested
+            if var.get("optional"):
+                continue
+                
             url = var.get("url", "")
             if url:
                 _print_info(f"  Get yours at: {url}")
