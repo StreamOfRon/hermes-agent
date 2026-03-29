@@ -112,6 +112,14 @@ def _build_skill_message(
             ]
         )
 
+    if loaded_skill.get("remote_env_note"):
+        parts.extend(
+            [
+                "",
+                f"[Skill setup note: {loaded_skill['remote_env_note']}]",
+            ]
+        )
+
     supporting = []
     linked_files = loaded_skill.get("linked_files") or {}
     for entries in linked_files.values():

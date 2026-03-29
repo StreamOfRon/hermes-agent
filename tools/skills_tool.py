@@ -1149,6 +1149,15 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                 setup_note = f"{setup_note} {backend.upper()}-backed skills need these requirements available inside the remote environment as well."
             if setup_note:
                 result["setup_note"] = setup_note
+        elif backend in _REMOTE_ENV_BACKENDS and missing_required_env_vars and not setup_needed:
+            # Env vars were captured locally during this invocation but may not
+            # be present inside the remote execution environment (SSH, Docker,
+            # etc.).  Surface a non-blocking advisory note so the agent can
+            # relay it to the user without marking the skill as unavailable.
+            result["remote_env_note"] = (
+                f"{backend.upper()}-backed skills need these requirements available"
+                f" inside the remote environment as well."
+            )
 
         # Surface agentskills.io optional fields when present
         if frontmatter.get("compatibility"):
