@@ -73,7 +73,7 @@ TOOLSETS = {
     # Basic toolsets - individual tool categories
     "web": {
         "description": "Web research and content extraction tools",
-        "tools": ["web_search", "web_extract"],
+        "tools": ["web_search", "web_extract", "searxng_search", "native_extract"],
         "includes": []  # No other toolsets included
     },
     
