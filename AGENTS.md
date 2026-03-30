@@ -356,29 +356,9 @@ pushes status updates to the user's chat. Control verbosity with `display.backgr
 in config.yaml (or `HERMES_BACKGROUND_NOTIFICATIONS` env var):
 
 - `all` — running-output updates + final message (default)
-- `result` — only the final completion completion message
+- `result` — only the final completion message
 - `error` — only the final message when exit code != 0
 - `off` — no watcher messages at all
-
----
-
-### Branch Management: NEVER Merge Dev to Main
-
-This repository follows a specific fork workflow where `main` is kept as a clean mirror of upstream. **NEVER merge `dev` into `main` directly.**
-
-**The workflow:**
-1. Create feature branches from `dev`
-2. Work in the feature branch
-3. Merge feature branches back to `dev` for integration
-4. When ready to submit upstream, rebase `dev` onto updated `main`, then open PR from `dev` to upstream
-
-**Rationale:**
-- `main` should only contain upstream code plus fork-specific infrastructure (like GitHub workflows)
-- `dev` contains active development work integrated from feature branches
-- This prevents polluting `main` with work-in-progress code
-- Scheduled workflows (like the sync-and-rebase workflow) only run from the default branch (`main`)
-
-**Important:** The `.github/workflows/sync-and-rebase.yml` file is intentionally isolated to `main` branch only, as it requires being on the default branch to run on schedule.
 
 ---
 
