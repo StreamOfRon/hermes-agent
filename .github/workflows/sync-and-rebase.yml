@@ -19,10 +19,10 @@ on:
       upstream_repo:
         description: 'Upstream repository (e.g., owner/repo)'
         required: false
-        default: 'anomalyco/hermes-agent'
+        default: 'NousResearch/hermes-agent'
 
 env:
-  UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'anomalyco/hermes-agent' }}
+  UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'NousResearch/hermes-agent' }}
 
 jobs:
   sync-and-rebase:
