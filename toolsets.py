@@ -36,7 +36,7 @@ _HERMES_CORE_TOOLS = [
     # File manipulation
     "read_file", "write_file", "patch", "search_files",
     # Vision + image generation
-    "vision_analyze", "image_generate",
+    "vision_analyze", "image_generate", "image_create",
     # MoA
     "mixture_of_agents",
     # Skills
@@ -92,6 +92,12 @@ TOOLSETS = {
     "image_gen": {
         "description": "Creative generation tools (images)",
         "tools": ["image_generate"],
+        "includes": []
+    },
+    
+    "image_create": {
+        "description": "Image generation via OpenAI-compatible providers (DALL-E 3)",
+        "tools": ["image_create"],
         "includes": []
     },
     
@@ -259,7 +265,7 @@ TOOLSETS = {
             # File manipulation
             "read_file", "write_file", "patch", "search_files",
             # Vision + image generation
-            "vision_analyze", "image_generate",
+    "vision_analyze", "image_generate", "image_create",
             # MoA
             "mixture_of_agents",
             # Skills
