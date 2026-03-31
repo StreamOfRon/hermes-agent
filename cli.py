@@ -263,17 +263,20 @@ def load_cli_config() -> Dict[str, Any]:
                     # Old format: model is a dict with default/base_url
                     defaults["model"].update(file_config["model"])
 
-            # Root-level provider and base_url override model config.
-            # Users may write:
-            #   model: kimi-k2.5:cloud
-            #   provider: custom
-            #   base_url: http://localhost:11434/v1
-            # These root-level keys must be merged into defaults["model"] so
-            # they are picked up by CLI provider resolution.
-            if "provider" in file_config and file_config["provider"]:
-                defaults["model"]["provider"] = file_config["provider"]
-            if "base_url" in file_config and file_config["base_url"]:
-                defaults["model"]["base_url"] = file_config["base_url"]
+            # Legacy root-level provider/base_url fallback.
+            # Some users (or old code) put provider: / base_url: at the
+            # config root instead of inside the model: section.  These are
+            # only used as a FALLBACK when model.provider / model.base_url
+            # is not already set — never as an override.  The canonical
+            # location is model.provider (written by `hermes model`).
+            if not defaults["model"].get("provider"):
+                root_provider = file_config.get("provider")
+                if root_provider:
+                    defaults["model"]["provider"] = root_provider
+            if not defaults["model"].get("base_url"):
+                root_base_url = file_config.get("base_url")
+                if root_base_url:
+                    defaults["model"]["base_url"] = root_base_url
             
             # Deep merge file_config into defaults.
             # First: merge keys that exist in both (deep-merge dicts, overwrite scalars)
@@ -991,9 +994,10 @@ def save_config_value(key_path: str, value: any) -> bool:
             current = current[key]
         current[keys[-1]] = value
         
-        # Save back
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        # Save back atomically — write to temp file + fsync + os.replace
+        # so an interrupt never leaves config.yaml truncated or empty.
+        from utils import atomic_yaml_write
+        atomic_yaml_write(config_path, config)
         
         # Enforce owner-only permissions on config files (contain API keys)
         try:
@@ -2192,7 +2196,31 @@ class HermesCLI:
         
         # Show tool availability warnings if any tools are disabled
         self._show_tool_availability_warnings()
-        
+
+        # Warn about very low context lengths (common with local servers)
+        if ctx_len and ctx_len <= 8192:
+            self.console.print()
+            self.console.print(
+                f"[yellow]⚠️  Context length is only {ctx_len:,} tokens — "
+                f"this is likely too low for agent use with tools.[/]"
+            )
+            self.console.print(
+                "[dim]   Hermes needs 16k–32k minimum. Tool schemas + system prompt alone use ~4k–8k.[/]"
+            )
+            base_url = getattr(self, "base_url", "") or ""
+            if "11434" in base_url or "ollama" in base_url.lower():
+                self.console.print(
+                    "[dim]   Ollama fix: OLLAMA_CONTEXT_LENGTH=32768 ollama serve[/]"
+                )
+            elif "1234" in base_url:
+                self.console.print(
+                    "[dim]   LM Studio fix: Set context length in model settings → reload model[/]"
+                )
+            else:
+                self.console.print(
+                    "[dim]   Fix: Set model.context_length in config.yaml, or increase your server's context setting[/]"
+                )
+
         self.console.print()
 
     def _preload_resumed_session(self) -> bool:
