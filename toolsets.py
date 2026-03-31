@@ -95,6 +95,12 @@ TOOLSETS = {
         "includes": []
     },
     
+    "image_create": {
+        "description": "Image generation via OpenAI-compatible providers (DALL-E 3)",
+        "tools": ["image_create"],
+        "includes": []
+    },
+    
     "terminal": {
         "description": "Terminal/command execution and process management tools",
         "tools": ["terminal", "process"],
