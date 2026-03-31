@@ -143,7 +143,6 @@ def _discover_tools():
         "tools.vision_tools",
         "tools.mixture_of_agents_tool",
         "tools.image_generation_tool",
-        "tools.image_tool",
         "tools.skills_tool",
         "tools.skill_manager_tool",
         "tools.browser_tool",
