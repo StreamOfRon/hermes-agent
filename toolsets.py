@@ -95,6 +95,12 @@ TOOLSETS = {
         "includes": []
     },
     
+    "image_create": {
+        "description": "Image generation via OpenAI-compatible providers (DALL-E 3)",
+        "tools": ["image_create"],
+        "includes": []
+    },
+    
     "terminal": {
         "description": "Terminal/command execution and process management tools",
         "tools": ["terminal", "process"],
@@ -259,7 +265,7 @@ TOOLSETS = {
             # File manipulation
             "read_file", "write_file", "patch", "search_files",
             # Vision + image generation
-            "vision_analyze", "image_generate",
+    "vision_analyze", "image_generate", "image_create",
             # MoA
             "mixture_of_agents",
             # Skills
