@@ -84,7 +84,8 @@ CONFIGURABLE_TOOLSETS = [
     ("file",            "📁 File Operations",           "read, write, patch, search"),
     ("code_execution",  "⚡ Code Execution",            "execute_code"),
     ("vision",          "👁️  Vision / Image Analysis",  "vision_analyze"),
-    ("image_gen",       "🎨 Image Generation",          "image_generate"),
+    ("image_gen",       "🎨 Image Generation (FAL)",    "image_generate"),
+    ("image_create",    "🖼️  Image Create (DALL-E)",    "image_create"),
     ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
     ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
     ("skills",          "📚 Skills",                    "list, view, manage"),
@@ -240,6 +241,37 @@ TOOL_CATEGORIES = {
                 "env_vars": [
                     {"key": "FAL_KEY", "prompt": "FAL API key", "url": "https://fal.ai/dashboard/keys"},
                 ],
+            },
+        ],
+    },
+    "image_create": {
+        "name": "Image Create",
+        "icon": "🖼️",
+        "providers": [
+            {
+                "name": "OpenAI",
+                "tag": "DALL-E 3 via OpenAI API",
+                "env_vars": [
+                    {"key": "OPENAI_API_KEY", "prompt": "OpenAI API key", "url": "https://platform.openai.com/api-keys"},
+                ],
+                "image_provider": "openai",
+            },
+            {
+                "name": "OpenRouter",
+                "tag": "DALL-E 3 via OpenRouter",
+                "env_vars": [
+                    {"key": "OPENROUTER_API_KEY", "prompt": "OpenRouter API key", "url": "https://openrouter.ai/keys"},
+                ],
+                "image_provider": "openrouter",
+            },
+            {
+                "name": "Custom endpoint",
+                "tag": "OpenAI-compatible image generation endpoint",
+                "env_vars": [
+                    {"key": "IMAGE_GEN_API_KEY", "prompt": "Image generation API key"},
+                    {"key": "IMAGE_GEN_BASE_URL", "prompt": "Image generation base URL"},
+                ],
+                "image_provider": "custom",
             },
         ],
     },
