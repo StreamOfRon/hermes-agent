@@ -363,18 +363,6 @@ DEFAULT_CONFIG = {
         "redact_pii": False,  # When True, hash user IDs and strip phone numbers from LLM context
     },
     
-    # Image generation via OpenAI-compatible providers (OpenAI, OpenRouter, custom).
-    "image_gen": {
-        "provider": "openai",       # "openai" | "openrouter" | "custom"
-        "model": "",                # empty = provider default, or e.g. "dall-e-3"
-        "base_url": "",             # empty = provider default
-        "upscale": {
-            "enabled": True,
-            "max_width": 2048,
-            "max_height": 2048,
-        },
-    },
-
     # Text-to-speech configuration
     "tts": {
         "provider": "edge",  # "edge" (free) | "elevenlabs" (premium) | "openai" | "neutts" (local)
@@ -555,30 +543,12 @@ OPTIONAL_ENV_VARS = {
         "category": "provider",
         "advanced": True,
     },
-    "IMAGE_GEN_API_KEY": {
-        "description": "API key for custom image generation endpoint",
-        "prompt": "Image generation API key (custom endpoint)",
-        "url": None,
-        "password": True,
-        "tools": ["image_create"],
-        "category": "tool",
-        "advanced": True,
-    },
-    "IMAGE_GEN_BASE_URL": {
-        "description": "Base URL for custom image generation endpoint",
-        "prompt": "Image generation base URL (custom endpoint)",
-        "url": None,
-        "password": False,
-        "tools": ["image_create"],
-        "category": "tool",
-        "advanced": True,
-    },
     "OPENROUTER_API_KEY": {
         "description": "OpenRouter API key (for vision, web scraping helpers, and MoA)",
         "prompt": "OpenRouter API key",
         "url": "https://openrouter.ai/keys",
         "password": True,
-        "tools": ["vision_analyze", "mixture_of_agents", "image_create"],
+        "tools": ["vision_analyze", "mixture_of_agents"],
         "category": "provider",
         "advanced": True,
     },
