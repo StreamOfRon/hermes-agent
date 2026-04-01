@@ -1,0 +1,184 @@
+name: Sync Fork and Rebase Dev
+#
+# Required Secrets:
+#   - GITHUB_TOKEN: Automatically provided by GitHub Actions
+#   - OPENROUTER_API_KEY: Get free API key from https://openrouter.ai/keys
+#
+# This workflow uses OpenRouter's free model tier (openrouter/free) to resolve
+# merge conflicts when rebasing dev onto main. The free tier has rate limits
+# but is sufficient for occasional conflict resolution.
+#
+
+on:
+  schedule:
+    # Run daily at 5 AM Pacific Time (America/Los_Angeles)
+    - cron: '0 5 * * *'
+      timezone: "America/Los_Angeles"
+  workflow_dispatch:
+
+jobs:
+  sync-and-rebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Sync main branch from upstream
+        run: |
+          gh repo sync --branch main || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Attempt to rebase dev on main
+        id: rebase
+        run: |
+          git checkout dev
+          git pull origin dev
+          
+          if git rebase main; then
+            echo "REBASE_SUCCESS=true" >> $GITHUB_ENV
+            echo "Rebase completed successfully"
+          else
+            echo "REBASE_SUCCESS=false" >> $GITHUB_ENV
+            echo "Rebase failed - will attempt to resolve with OpenCode"
+            # DO NOT abort — leave conflict markers for OpenCode to resolve
+            exit 0
+          fi
+
+      - name: Resolve conflicts with OpenCode
+        if: env.REBASE_SUCCESS == 'false'
+        id: opencode-resolve
+        continue-on-error: true
+        uses: anomalyco/opencode/github@latest
+        with:
+          model: 'openrouter/openrouter/free'
+          prompt: |
+            A git rebase of dev onto main is IN PROGRESS with conflicts.
+            Do NOT start a new rebase — the conflicts are already here.
+
+            Please:
+            1. Look at the conflicted files (git status, git diff)
+            2. Resolve all conflict markers intelligently
+            3. git add each resolved file
+            4. Run git rebase --continue to proceed
+            5. Repeat until the rebase completes
+
+            Focus on:
+            - Keeping changes from both branches when appropriate
+            - Prioritizing main branch changes for structural/config files
+            - Keeping dev branch changes for feature implementations
+            - If a commit is already in main, skip it (git rebase --skip)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Verify rebase resolution
+        id: verify-rebase
+        if: env.REBASE_SUCCESS == 'false'
+        run: |
+          # Check if we are still in a rebase state
+          if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
+            echo "OPENCODE_SUCCESS=false" >> $GITHUB_ENV
+            echo "Rebase still in progress after OpenCode — committing conflicted state for manual review"
+            # Commit the conflicted state so we can push it for manual resolution
+            git checkout dev
+            git merge --no-commit --no-ff main || true
+            git add -A
+            git commit -m "WIP: rebase dev on main - conflicts need manual resolution" || true
+          else
+            # Check if dev is now based on main
+            git checkout dev
+            if git merge-base --is-ancestor main dev; then
+              echo "OPENCODE_SUCCESS=true" >> $GITHUB_ENV
+              echo "OpenCode successfully resolved conflicts"
+            else
+              echo "OPENCODE_SUCCESS=false" >> $GITHUB_ENV
+              echo "OpenCode did not complete rebase"
+            fi
+          fi
+
+      - name: Install uv and Python
+        if: (env.REBASE_SUCCESS == 'true' || env.OPENCODE_SUCCESS == 'true') && !cancelled()
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.11
+        if: (env.REBASE_SUCCESS == 'true' || env.OPENCODE_SUCCESS == 'true') && !cancelled()
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        if: (env.REBASE_SUCCESS == 'true' || env.OPENCODE_SUCCESS == 'true') && !cancelled()
+        run: |
+          uv venv .venv --python 3.11
+          source .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+
+      - name: Run tests to verify rebase
+        if: (env.REBASE_SUCCESS == 'true' || env.OPENCODE_SUCCESS == 'true') && !cancelled()
+        id: tests
+        continue-on-error: true
+        run: |
+          source .venv/bin/activate
+          python -m pytest tests/ -q --ignore=tests/integration --tb=short -n auto
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+
+      - name: Force-push dev branch (tests passed)
+        if: (env.REBASE_SUCCESS == 'true' || env.OPENCODE_SUCCESS == 'true') && steps.tests.outcome == 'success'
+        run: |
+          git checkout dev
+          git push --force-with-lease origin dev
+
+      - name: Create PR with intermediate state (tests failed or unresolved conflicts)
+        if: |
+          (env.REBASE_SUCCESS == 'false' && env.OPENCODE_SUCCESS == 'false') || 
+          (steps.tests.outcome == 'failure')
+        continue-on-error: true
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: rebase/dev-on-main-${{ github.run_id }}
+          base: dev
+          title: 'Rebase dev on main - Manual resolution needed'
+          body: |
+            ## Rebase Status
+            
+            This PR contains the intermediate state of rebasing `dev` onto `main`.
+            
+            ### What happened:
+            - The automatic rebase of `dev` onto `main` encountered conflicts
+            - ${{ env.REBASE_SUCCESS == 'true' && '✅ Rebase completed cleanly' || '❌ Rebase had conflicts' }}
+            - ${{ env.OPENCODE_SUCCESS == 'true' && '✅ OpenCode resolved conflicts' || env.OPENCODE_SUCCESS == 'false' && '❌ OpenCode could not resolve conflicts' || '⏭️ OpenCode resolution was not attempted' }}
+            - ${{ steps.tests.outcome == 'success' && '✅ Tests passed' || steps.tests.outcome == 'failure' && '❌ Tests failed' || '⏭️ Tests were not run' }}
+            
+            ### Action required:
+            Please review the changes and resolve any remaining conflicts manually.
+            Once resolved, the branch can be merged back into `dev`.
+            
+            ---
+            *This PR was automatically created by the sync-and-rebase workflow.*
+          draft: true
+
+      - name: Report status
+        if: always()
+        run: |
+          echo "=== Rebase Sync Status ==="
+          echo "Rebase success: ${{ env.REBASE_SUCCESS || 'N/A' }}"
+          echo "OpenCode success: ${{ env.OPENCODE_SUCCESS || 'N/A' }}"
+          echo "Tests outcome: ${{ steps.tests.outcome || 'N/A' }}"
+          echo "==========================="
