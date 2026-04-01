@@ -642,9 +642,15 @@ def _print_setup_summary(config: dict, hermes_home):
 
     # FAL (image generation)
     if get_env_value("FAL_KEY"):
-        tool_status.append(("Image Generation", True, None))
+        tool_status.append(("Image Generation (FAL)", True, None))
     else:
-        tool_status.append(("Image Generation", False, "FAL_KEY"))
+        tool_status.append(("Image Generation (FAL)", False, "FAL_KEY"))
+
+    # Image Create (OpenAI / OpenRouter / custom)
+    if get_env_value("OPENAI_API_KEY") or get_env_value("OPENROUTER_API_KEY") or get_env_value("IMAGE_GEN_API_KEY"):
+        tool_status.append(("Image Create (DALL-E)", True, None))
+    else:
+        tool_status.append(("Image Create (DALL-E)", False, "OPENAI_API_KEY, OPENROUTER_API_KEY, or IMAGE_GEN_API_KEY"))
 
     # TTS — show configured provider
     tts_provider = config.get("tts", {}).get("provider", "edge")

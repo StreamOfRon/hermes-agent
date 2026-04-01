@@ -36,7 +36,7 @@ _HERMES_CORE_TOOLS = [
     # File manipulation
     "read_file", "write_file", "patch", "search_files",
     # Vision + image generation
-    "vision_analyze", "image_generate",
+    "vision_analyze", "image_generate", "image_create",
     # MoA
     "mixture_of_agents",
     # Skills
@@ -73,7 +73,7 @@ TOOLSETS = {
     # Basic toolsets - individual tool categories
     "web": {
         "description": "Web research and content extraction tools",
-        "tools": ["web_search", "web_extract"],
+        "tools": ["web_search", "web_extract", "searxng_search", "native_extract"],
         "includes": []  # No other toolsets included
     },
     

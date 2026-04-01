@@ -65,7 +65,11 @@ jobs:
         continue-on-error: true
         uses: anomalyco/opencode/github@latest
         with:
+<<<<<<< HEAD
           model: 'openrouter/openrouter/free'
+=======
+          model: 'openrouter:openrouter/free'
+>>>>>>> 4966291a (Update opencode model reference in sync-and-rebase workflow; add opencode configuration and plans directory)
           prompt: |
             A git rebase of dev onto main is IN PROGRESS with conflicts.
             Do NOT start a new rebase — the conflicts are already here.
