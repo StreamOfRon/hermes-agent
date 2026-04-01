@@ -263,17 +263,20 @@ def load_cli_config() -> Dict[str, Any]:
                     # Old format: model is a dict with default/base_url
                     defaults["model"].update(file_config["model"])
 
-            # Root-level provider and base_url override model config.
-            # Users may write:
-            #   model: kimi-k2.5:cloud
-            #   provider: custom
-            #   base_url: http://localhost:11434/v1
-            # These root-level keys must be merged into defaults["model"] so
-            # they are picked up by CLI provider resolution.
-            if "provider" in file_config and file_config["provider"]:
-                defaults["model"]["provider"] = file_config["provider"]
-            if "base_url" in file_config and file_config["base_url"]:
-                defaults["model"]["base_url"] = file_config["base_url"]
+            # Legacy root-level provider/base_url fallback.
+            # Some users (or old code) put provider: / base_url: at the
+            # config root instead of inside the model: section.  These are
+            # only used as a FALLBACK when model.provider / model.base_url
+            # is not already set — never as an override.  The canonical
+            # location is model.provider (written by `hermes model`).
+            if not defaults["model"].get("provider"):
+                root_provider = file_config.get("provider")
+                if root_provider:
+                    defaults["model"]["provider"] = root_provider
+            if not defaults["model"].get("base_url"):
+                root_base_url = file_config.get("base_url")
+                if root_base_url:
+                    defaults["model"]["base_url"] = root_base_url
             
             # Deep merge file_config into defaults.
             # First: merge keys that exist in both (deep-merge dicts, overwrite scalars)
@@ -991,9 +994,10 @@ def save_config_value(key_path: str, value: any) -> bool:
             current = current[key]
         current[keys[-1]] = value
         
-        # Save back
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        # Save back atomically — write to temp file + fsync + os.replace
+        # so an interrupt never leaves config.yaml truncated or empty.
+        from utils import atomic_yaml_write
+        atomic_yaml_write(config_path, config)
         
         # Enforce owner-only permissions on config files (contain API keys)
         try:
@@ -1124,9 +1128,9 @@ class HermesCLI:
         self.acp_args: list[str] = []
         self.base_url = (
             base_url
-            or os.getenv("OPENAI_BASE_URL")
-            or os.getenv("OPENROUTER_BASE_URL", CLI_CONFIG["model"]["base_url"])
-        )
+            or CLI_CONFIG["model"].get("base_url", "")
+            or os.getenv("OPENROUTER_BASE_URL", "")
+        ) or None
         # Match key to resolved base_url: OpenRouter URL → prefer OPENROUTER_API_KEY,
         # custom endpoint → prefer OPENAI_API_KEY (issue #560).
         # Note: _ensure_runtime_credentials() re-resolves this before first use.
@@ -1955,6 +1959,7 @@ class HermesCLI:
         resolved_api_mode = runtime.get("api_mode", self.api_mode)
         resolved_acp_command = runtime.get("command")
         resolved_acp_args = list(runtime.get("args") or [])
+        resolved_credential_pool = runtime.get("credential_pool")
         if not isinstance(api_key, str) or not api_key:
             # Custom / local endpoints (llama.cpp, ollama, vLLM, etc.) often
             # don't require authentication.  When a base_url IS configured but
@@ -1987,6 +1992,7 @@ class HermesCLI:
         self.api_mode = resolved_api_mode
         self.acp_command = resolved_acp_command
         self.acp_args = resolved_acp_args
+        self._credential_pool = resolved_credential_pool
         self._provider_source = runtime.get("source")
         self.api_key = api_key
         self.base_url = base_url
@@ -2088,6 +2094,7 @@ class HermesCLI:
                 "api_mode": self.api_mode,
                 "command": self.acp_command,
                 "args": list(self.acp_args or []),
+                "credential_pool": getattr(self, "_credential_pool", None),
             }
             effective_model = model_override or self.model
             self.agent = AIAgent(
@@ -2098,6 +2105,7 @@ class HermesCLI:
                 api_mode=runtime.get("api_mode"),
                 acp_command=runtime.get("command"),
                 acp_args=runtime.get("args"),
+                credential_pool=runtime.get("credential_pool"),
                 max_iterations=self.max_turns,
                 enabled_toolsets=self.enabled_toolsets,
                 verbose_logging=self.verbose,
@@ -2188,7 +2196,31 @@ class HermesCLI:
         
         # Show tool availability warnings if any tools are disabled
         self._show_tool_availability_warnings()
-        
+
+        # Warn about very low context lengths (common with local servers)
+        if ctx_len and ctx_len <= 8192:
+            self.console.print()
+            self.console.print(
+                f"[yellow]⚠️  Context length is only {ctx_len:,} tokens — "
+                f"this is likely too low for agent use with tools.[/]"
+            )
+            self.console.print(
+                "[dim]   Hermes needs 16k–32k minimum. Tool schemas + system prompt alone use ~4k–8k.[/]"
+            )
+            base_url = getattr(self, "base_url", "") or ""
+            if "11434" in base_url or "ollama" in base_url.lower():
+                self.console.print(
+                    "[dim]   Ollama fix: OLLAMA_CONTEXT_LENGTH=32768 ollama serve[/]"
+                )
+            elif "1234" in base_url:
+                self.console.print(
+                    "[dim]   LM Studio fix: Set context length in model settings → reload model[/]"
+                )
+            else:
+                self.console.print(
+                    "[dim]   Fix: Set model.context_length in config.yaml, or increase your server's context setting[/]"
+                )
+
         self.console.print()
 
     def _preload_resumed_session(self) -> bool:
@@ -2837,6 +2869,28 @@ class HermesCLI:
         print("  Example: python cli.py --toolsets web,terminal")
         print()
     
+    def _handle_profile_command(self):
+        """Display active profile name and home directory."""
+        from hermes_constants import get_hermes_home, display_hermes_home
+
+        home = get_hermes_home()
+        display = display_hermes_home()
+
+        profiles_parent = Path.home() / ".hermes" / "profiles"
+        try:
+            rel = home.relative_to(profiles_parent)
+            profile_name = str(rel).split("/")[0]
+        except ValueError:
+            profile_name = None
+
+        print()
+        if profile_name:
+            print(f"  Profile: {profile_name}")
+        else:
+            print("  Profile: default")
+        print(f"  Home:    {display}")
+        print()
+
     def show_config(self):
         """Display current configuration with kawaii ASCII art."""
         # Get terminal config from environment (which was set from cli-config.yaml)
@@ -3217,7 +3271,7 @@ class HermesCLI:
                         print(f"      {mid}{current_marker}")
                 elif p["id"] == "custom":
                     from hermes_cli.models import _get_custom_base_url
-                    custom_url = _get_custom_base_url() or os.getenv("OPENAI_BASE_URL", "")
+                    custom_url = _get_custom_base_url()
                     if custom_url:
                         print(f"      endpoint: {custom_url}")
                     if is_active:
@@ -3679,6 +3733,8 @@ class HermesCLI:
             return False
         elif canonical == "help":
             self.show_help()
+        elif canonical == "profile":
+            self._handle_profile_command()
         elif canonical == "tools":
             self._handle_tools_command(cmd_original)
         elif canonical == "toolsets":
@@ -3880,6 +3936,8 @@ class HermesCLI:
             self._handle_stop_command()
         elif canonical == "background":
             self._handle_background_command(cmd_original)
+        elif canonical == "btw":
+            self._handle_btw_command(cmd_original)
         elif canonical == "queue":
             # Extract prompt after "/queue " or "/q "
             parts = cmd_original.split(None, 1)
@@ -4164,6 +4222,121 @@ class HermesCLI:
 
         thread = threading.Thread(target=run_background, daemon=True, name=f"bg-task-{task_id}")
         self._background_tasks[task_id] = thread
+        thread.start()
+
+    def _handle_btw_command(self, cmd: str):
+        """Handle /btw <question> — ephemeral side question using session context.
+
+        Snapshots the current conversation history, spawns a no-tools agent in
+        a background thread, and prints the answer without persisting anything
+        to the main session.
+        """
+        parts = cmd.strip().split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            _cprint("  Usage: /btw <question>")
+            _cprint("  Example: /btw what module owns session title sanitization?")
+            _cprint("  Answers using session context. No tools, not persisted.")
+            return
+
+        question = parts[1].strip()
+        task_id = f"btw_{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+        if not self._ensure_runtime_credentials():
+            _cprint("  (>_<) Cannot start /btw: no valid credentials.")
+            return
+
+        turn_route = self._resolve_turn_agent_config(question)
+        history_snapshot = list(self.conversation_history)
+
+        preview = question[:60] + ("..." if len(question) > 60 else "")
+        _cprint(f'  💬 /btw: "{preview}"')
+
+        def run_btw():
+            try:
+                btw_agent = AIAgent(
+                    model=turn_route["model"],
+                    api_key=turn_route["runtime"].get("api_key"),
+                    base_url=turn_route["runtime"].get("base_url"),
+                    provider=turn_route["runtime"].get("provider"),
+                    api_mode=turn_route["runtime"].get("api_mode"),
+                    acp_command=turn_route["runtime"].get("command"),
+                    acp_args=turn_route["runtime"].get("args"),
+                    max_iterations=8,
+                    enabled_toolsets=[],
+                    quiet_mode=True,
+                    verbose_logging=False,
+                    session_id=task_id,
+                    platform="cli",
+                    reasoning_config=self.reasoning_config,
+                    providers_allowed=self._providers_only,
+                    providers_ignored=self._providers_ignore,
+                    providers_order=self._providers_order,
+                    provider_sort=self._provider_sort,
+                    provider_require_parameters=self._provider_require_params,
+                    provider_data_collection=self._provider_data_collection,
+                    fallback_model=self._fallback_model,
+                    session_db=None,
+                    skip_memory=True,
+                    skip_context_files=True,
+                    persist_session=False,
+                )
+
+                btw_prompt = (
+                    "[Ephemeral /btw side question. Answer using the conversation "
+                    "context. No tools available. Be direct and concise.]\n\n"
+                    + question
+                )
+                result = btw_agent.run_conversation(
+                    user_message=btw_prompt,
+                    conversation_history=history_snapshot,
+                    task_id=task_id,
+                    sync_honcho=False,
+                )
+
+                response = (result.get("final_response") or "") if result else ""
+                if not response and result and result.get("error"):
+                    response = f"Error: {result['error']}"
+
+                # TUI refresh before printing
+                if self._app:
+                    self._app.invalidate()
+                    time.sleep(0.05)
+                print()
+
+                if response:
+                    try:
+                        from hermes_cli.skin_engine import get_active_skin
+                        _skin = get_active_skin()
+                        _resp_color = _skin.get_color("response_border", "#4F6D4A")
+                    except Exception:
+                        _resp_color = "#4F6D4A"
+
+                    ChatConsole().print(Panel(
+                        _rich_text_from_ansi(response),
+                        title=f"[{_resp_color} bold]⚕ /btw[/]",
+                        title_align="left",
+                        border_style=_resp_color,
+                        box=rich_box.HORIZONTALS,
+                        padding=(1, 2),
+                    ))
+                else:
+                    _cprint("  💬 /btw: (no response)")
+
+                if self.bell_on_complete:
+                    sys.stdout.write("\a")
+                    sys.stdout.flush()
+
+            except Exception as e:
+                if self._app:
+                    self._app.invalidate()
+                    time.sleep(0.05)
+                print()
+                _cprint(f"  ❌ /btw failed: {e}")
+            finally:
+                if self._app:
+                    self._invalidate(min_interval=0)
+
+        thread = threading.Thread(target=run_btw, daemon=True, name=f"btw-{task_id}")
         thread.start()
 
     @staticmethod
@@ -5573,6 +5746,8 @@ class HermesCLI:
             self.agent = None
 
         # Initialize agent if needed
+        if self.agent is None:
+            _cprint(f"{_DIM}Initializing agent...{_RST}")
         if not self._init_agent(
             model_override=turn_route["model"],
             runtime_override=turn_route["runtime"],
@@ -7393,6 +7568,19 @@ class HermesCLI:
                     finally:
                         self._agent_running = False
                         self._spinner_text = ""
+
+                        # Push the input prompt toward the bottom of the
+                        # terminal so it doesn't sit mid-screen after short
+                        # responses.  patch_stdout renders these newlines
+                        # above the input area, creating visual separation
+                        # and anchoring the prompt near the bottom.
+                        try:
+                            _pad = shutil.get_terminal_size().lines // 2
+                            if _pad > 2:
+                                _cprint("\n" * _pad)
+                        except Exception:
+                            pass
+
                         app.invalidate()  # Refresh status line
 
                         # Continuous voice: auto-restart recording after agent responds.
@@ -7421,6 +7609,20 @@ class HermesCLI:
         # Register atexit cleanup so resources are freed even on unexpected exit
         atexit.register(_run_cleanup)
         
+        # Register signal handlers for graceful shutdown on SSH disconnect / SIGTERM
+        def _signal_handler(signum, frame):
+            """Handle SIGHUP/SIGTERM by triggering graceful cleanup."""
+            logger.debug("Received signal %s, triggering graceful shutdown", signum)
+            raise KeyboardInterrupt()
+        
+        try:
+            import signal as _signal
+            _signal.signal(_signal.SIGTERM, _signal_handler)
+            if hasattr(_signal, 'SIGHUP'):
+                _signal.signal(_signal.SIGHUP, _signal_handler)
+        except Exception:
+            pass  # Signal handlers may fail in restricted environments
+        
         # Install a custom asyncio exception handler that suppresses the
         # "Event loop is closed" RuntimeError from httpx transport cleanup.
         # This is defense-in-depth — the primary fix is neuter_async_httpx_del
@@ -7444,7 +7646,7 @@ class HermesCLI:
                 except Exception:
                     pass
                 app.run()
-        except (EOFError, KeyboardInterrupt):
+        except (EOFError, KeyboardInterrupt, BrokenPipeError):
             pass
         finally:
             self._should_exit = True
@@ -7483,6 +7685,23 @@ class HermesCLI:
                     self._session_db.end_session(self.agent.session_id, "cli_close")
                 except (Exception, KeyboardInterrupt) as e:
                     logger.debug("Could not close session in DB: %s", e)
+            # Plugin hook: on_session_end — safety net for interrupted exits.
+            # run_conversation() already fires this per-turn on normal completion,
+            # so only fire here if the agent was mid-turn (_agent_running) when
+            # the exit occurred, meaning run_conversation's hook didn't fire.
+            if self.agent and getattr(self, '_agent_running', False):
+                try:
+                    from hermes_cli.plugins import invoke_hook as _invoke_hook
+                    _invoke_hook(
+                        "on_session_end",
+                        session_id=self.agent.session_id,
+                        completed=False,
+                        interrupted=True,
+                        model=getattr(self.agent, 'model', None),
+                        platform=getattr(self.agent, 'platform', None) or "cli",
+                    )
+                except Exception:
+                    pass
             _run_cleanup()
             self._print_exit_summary()
 

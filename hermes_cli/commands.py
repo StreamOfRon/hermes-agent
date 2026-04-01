@@ -67,10 +67,13 @@ COMMAND_REGISTRY: list[CommandDef] = [
                gateway_only=True),
     CommandDef("background", "Run a prompt in the background", "Session",
                aliases=("bg",), args_hint="<prompt>"),
+    CommandDef("btw", "Ephemeral side question using session context (no tools, not persisted)", "Session",
+               args_hint="<question>"),
     CommandDef("queue", "Queue a prompt for the next turn (doesn't interrupt)", "Session",
                aliases=("q",), args_hint="<prompt>"),
     CommandDef("status", "Show session info", "Session",
                gateway_only=True),
+    CommandDef("profile", "Show active profile name and home directory", "Info"),
     CommandDef("sethome", "Set this chat as the home channel", "Session",
                gateway_only=True, aliases=("set-home",)),
     CommandDef("resume", "Resume a previously-named session", "Session",
@@ -365,28 +368,87 @@ def telegram_bot_commands() -> list[tuple[str, str]]:
     return result
 
 
-def telegram_menu_commands(max_commands: int = 100) -> tuple[list[tuple[str, str]], int]:
-    """Return Telegram menu commands (built-in + active skills), capped to the Bot API limit.
+_TG_NAME_LIMIT = 32
 
-    Built-in commands come first, then active skill commands.  Commands beyond
-    ``max_commands`` remain callable in the gateway; they are just omitted from
-    Telegram's native slash-command picker.
+
+def _clamp_telegram_names(
+    entries: list[tuple[str, str]],
+    reserved: set[str],
+) -> list[tuple[str, str]]:
+    """Enforce Telegram's 32-char command name limit with collision avoidance.
+
+    Names exceeding 32 chars are truncated.  If truncation creates a duplicate
+    (against *reserved* names or earlier entries in the same batch), the name is
+    shortened to 31 chars and a digit ``0``-``9`` is appended to differentiate.
+    If all 10 digit slots are taken the entry is silently dropped.
+    """
+    used: set[str] = set(reserved)
+    result: list[tuple[str, str]] = []
+    for name, desc in entries:
+        if len(name) > _TG_NAME_LIMIT:
+            candidate = name[:_TG_NAME_LIMIT]
+            if candidate in used:
+                prefix = name[:_TG_NAME_LIMIT - 1]
+                for digit in range(10):
+                    candidate = f"{prefix}{digit}"
+                    if candidate not in used:
+                        break
+                else:
+                    # All 10 digit slots exhausted — skip entry
+                    continue
+            name = candidate
+        if name in used:
+            continue
+        used.add(name)
+        result.append((name, desc))
+    return result
+
+
+def telegram_menu_commands(max_commands: int = 100) -> tuple[list[tuple[str, str]], int]:
+    """Return Telegram menu commands capped to the Bot API limit.
+
+    Priority order (higher priority = never bumped by overflow):
+      1. Core CommandDef commands (always included)
+      2. Plugin slash commands (take precedence over skills)
+      3. Built-in skill commands (fill remaining slots, alphabetical)
+
+    Skills are the only tier that gets trimmed when the cap is hit.
+    User-installed hub skills are excluded — accessible via /skills.
 
     Returns:
         (menu_commands, hidden_count) where hidden_count is the number of
-        commands omitted due to the cap.
+        skill commands omitted due to the cap.
     """
-    all_commands = list(telegram_bot_commands())
+    core_commands = list(telegram_bot_commands())
+    # Reserve core names so plugin/skill truncation can't collide with them
+    reserved_names = {n for n, _ in core_commands}
+    all_commands = list(core_commands)
 
-    # Append active BUILT-IN skill commands only (not user-installed hub skills).
-    # User-installed skills stay accessible via /skills and by typing the command
-    # directly, but don't clutter the Telegram menu.
+    # Plugin slash commands get priority over skills
+    plugin_entries: list[tuple[str, str]] = []
+    try:
+        from hermes_cli.plugins import get_plugin_manager
+        pm = get_plugin_manager()
+        plugin_cmds = getattr(pm, "_plugin_commands", {})
+        for cmd_name in sorted(plugin_cmds):
+            tg_name = cmd_name.replace("-", "_")
+            desc = "Plugin command"
+            if len(desc) > 40:
+                desc = desc[:37] + "..."
+            plugin_entries.append((tg_name, desc))
+    except Exception:
+        pass
+
+    # Clamp plugin names to 32 chars with collision avoidance
+    plugin_entries = _clamp_telegram_names(plugin_entries, reserved_names)
+    reserved_names.update(n for n, _ in plugin_entries)
+    all_commands.extend(plugin_entries)
+
+    # Remaining slots go to built-in skill commands (not hub-installed).
+    skill_entries: list[tuple[str, str]] = []
     try:
         from agent.skill_commands import get_skill_commands
         from tools.skills_tool import SKILLS_DIR
-        # Built-in skills are synced to SKILLS_DIR (~/.hermes/skills/).
-        # Hub-installed skills go into SKILLS_DIR/.hub/.  Exclude .hub/ skills
-        # from the menu — they're user-installed, not repo built-in.
         _skills_dir = str(SKILLS_DIR.resolve())
         _hub_dir = str((SKILLS_DIR / ".hub").resolve())
         skill_cmds = get_skill_commands()
@@ -396,18 +458,24 @@ def telegram_menu_commands(max_commands: int = 100) -> tuple[list[tuple[str, str
             if not skill_path.startswith(_skills_dir):
                 continue
             if skill_path.startswith(_hub_dir):
-                continue  # hub-installed, not built-in
+                continue
             name = cmd_key.lstrip("/").replace("-", "_")
             desc = info.get("description", "")
             # Keep descriptions short — setMyCommands has an undocumented
             # total payload limit.  40 chars fits 100 commands safely.
             if len(desc) > 40:
                 desc = desc[:37] + "..."
-            all_commands.append((name, desc))
+            skill_entries.append((name, desc))
     except Exception:
         pass
 
-    hidden_count = max(0, len(all_commands) - max_commands)
+    # Clamp skill names to 32 chars with collision avoidance
+    skill_entries = _clamp_telegram_names(skill_entries, reserved_names)
+
+    # Skills fill remaining slots — they're the only tier that gets trimmed
+    remaining_slots = max(0, max_commands - len(all_commands))
+    hidden_count = max(0, len(skill_entries) - remaining_slots)
+    all_commands.extend(skill_entries[:remaining_slots])
     return all_commands[:max_commands], hidden_count
 
 
