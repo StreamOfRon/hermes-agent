@@ -23,7 +23,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      workflows: write
       id-token: write
     
     steps:
@@ -149,6 +148,7 @@ jobs:
         if: |
           (env.REBASE_SUCCESS == 'false' && env.OPENCODE_SUCCESS == 'false') || 
           (steps.tests.outcome == 'failure')
+        continue-on-error: true
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
