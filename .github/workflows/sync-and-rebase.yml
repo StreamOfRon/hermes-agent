@@ -64,7 +64,7 @@ jobs:
         id: opencode-resolve
         uses: anomalyco/opencode/github@latest
         with:
-          model: 'openrouter/free'
+          model: 'openrouter/openrouter/free'
           prompt: |
             Resolve the git rebase conflicts between the dev branch and main.
             
