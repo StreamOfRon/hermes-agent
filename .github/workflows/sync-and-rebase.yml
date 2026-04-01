@@ -55,7 +55,7 @@ jobs:
           else
             echo "REBASE_SUCCESS=false" >> $GITHUB_ENV
             echo "Rebase failed - will attempt to resolve with OpenCode"
-            git rebase --abort || true
+            # DO NOT abort — leave conflict markers for OpenCode to resolve
             exit 0
           fi
 
@@ -66,19 +66,21 @@ jobs:
         with:
           model: 'openrouter/openrouter/free'
           prompt: |
-            Resolve the git rebase conflicts between the dev branch and main.
-            
-            Current repository has diverged. Please:
-            1. Start a rebase of dev on main
-            2. Resolve any merge conflicts intelligently
-            3. Ensure code compiles/runs correctly
-            4. Complete the rebase
-            
+            A git rebase of dev onto main is IN PROGRESS with conflicts.
+            Do NOT start a new rebase — the conflicts are already here.
+
+            Please:
+            1. Look at the conflicted files (git status, git diff)
+            2. Resolve all conflict markers intelligently
+            3. git add each resolved file
+            4. Run git rebase --continue to proceed
+            5. Repeat until the rebase completes
+
             Focus on:
             - Keeping changes from both branches when appropriate
             - Prioritizing main branch changes for structural/config files
             - Keeping dev branch changes for feature implementations
-            - Ensuring tests would pass after resolution
+            - If a commit is already in main, skip it (git rebase --skip)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -90,9 +92,12 @@ jobs:
           # Check if we are still in a rebase state
           if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
             echo "OPENCODE_SUCCESS=false" >> $GITHUB_ENV
-            echo "Rebase still in progress after OpenCode"
-            # Abort any partial rebase
-            git rebase --abort || true
+            echo "Rebase still in progress after OpenCode — committing conflicted state for manual review"
+            # Commit the conflicted state so we can push it for manual resolution
+            git checkout dev
+            git merge --no-commit --no-ff main || true
+            git add -A
+            git commit -m "WIP: rebase dev on main - conflicts need manual resolution" || true
           else
             # Check if dev is now based on main
             git checkout dev
