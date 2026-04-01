@@ -15,14 +15,6 @@ on:
     - cron: '0 5 * * *'
       timezone: "America/Los_Angeles"
   workflow_dispatch:
-    inputs:
-      upstream_repo:
-        description: 'Upstream repository (e.g., owner/repo)'
-        required: false
-        default: 'NousResearch/hermes-agent'
-
-env:
-  UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'NousResearch/hermes-agent' }}
 
 jobs:
   sync-and-rebase:
@@ -179,7 +171,6 @@ jobs:
         if: always()
         run: |
           echo "=== Rebase Sync Status ==="
-          echo "Upstream repo: ${{ env.UPSTREAM_REPO }}"
           echo "Rebase success: ${{ env.REBASE_SUCCESS || 'N/A' }}"
           echo "OpenCode success: ${{ env.OPENCODE_SUCCESS || 'N/A' }}"
           echo "Tests outcome: ${{ steps.tests.outcome || 'N/A' }}"
