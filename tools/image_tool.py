@@ -306,7 +306,7 @@ def image_create_tool(
 def check_image_create_requirements() -> bool:
     """Check if requirements for image_create are met.
 
-    Returns True if the configured provider has its API key set AND
+    Returns True if any provider's API key is set AND
     the openai package is importable.
     """
     try:
@@ -314,9 +314,12 @@ def check_image_create_requirements() -> bool:
     except ImportError:
         return False
 
-    config = _load_image_gen_config()
-    provider_info = _resolve_provider(config)
-    return bool(provider_info["api_key"])
+    # Check if any of the supported API keys are set (consistent with hermes setup)
+    return bool(
+        os.getenv("OPENAI_API_KEY")
+        or os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("IMAGE_GEN_API_KEY")
+    )
 
 
 # ---------------------------------------------------------------------------
