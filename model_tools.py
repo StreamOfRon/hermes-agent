@@ -317,6 +317,17 @@ def get_tool_definitions(
         from tools.code_execution_tool import SANDBOX_ALLOWED_TOOLS, build_execute_code_schema
         sandbox_enabled = SANDBOX_ALLOWED_TOOLS & available_tool_names
         dynamic_schema = build_execute_code_schema(sandbox_enabled)
+        # Append a note for any image generation tools that are available directly,
+        # so the model doesn't try to invoke them via execute_code or the terminal.
+        image_gen_tools = [t for t in ("image_create", "image_generate") if t in available_tool_names]
+        if image_gen_tools:
+            tool_list = " and ".join(f"`{t}`" for t in image_gen_tools)
+            dynamic_schema = dict(dynamic_schema)
+            dynamic_schema["description"] = (
+                dynamic_schema["description"]
+                + f"\n\nDo NOT use execute_code for image generation. "
+                f"Call {tool_list} directly instead."
+            )
         for i, td in enumerate(filtered_tools):
             if td.get("function", {}).get("name") == "execute_code":
                 filtered_tools[i] = {"type": "function", "function": dynamic_schema}

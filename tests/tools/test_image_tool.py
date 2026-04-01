@@ -564,6 +564,21 @@ class TestCheckImageCreateRequirements:
         result = check_image_create_requirements()
         assert result is True
 
+    def test_returns_true_with_openrouter_key(self, monkeypatch):
+        from tools.image_tool import check_image_create_requirements
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        result = check_image_create_requirements()
+        assert result is True
+
+    def test_returns_true_with_custom_key(self, monkeypatch):
+        from tools.image_tool import check_image_create_requirements
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("IMAGE_GEN_API_KEY", "sk-custom-test")
+        result = check_image_create_requirements()
+        assert result is True
+
 
 # ---------------------------------------------------------------------------
 # Registry
