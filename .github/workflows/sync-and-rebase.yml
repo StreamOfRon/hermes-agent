@@ -8,6 +8,9 @@ name: Sync Fork and Rebase Dev
 # merge conflicts when rebasing dev onto main. The free tier has rate limits
 # but is sufficient for occasional conflict resolution.
 #
+# This workflow uses OpenRouter's free model tier (openrouter/free) to resolve
+# merge conflicts when rebasing dev onto main. The free tier has rate limits
+# but is sufficient for occasional conflict resolution.
 
 on:
   schedule:
@@ -15,6 +18,14 @@ on:
     - cron: '0 5 * * *'
       timezone: "America/Los_Angeles"
   workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Upstream repository (e.g., owner/repo)'
+        required: false
+        default: 'anomalyco/hermes-agent'
+
+env:
+  UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'anomalyco/hermes-agent' }}
 
 jobs:
   sync-and-rebase:
@@ -24,7 +35,7 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,40 +59,37 @@ jobs:
         run: |
           git checkout dev
           git pull origin dev
-          
           if git rebase main; then
             echo "REBASE_SUCCESS=true" >> $GITHUB_ENV
             echo "Rebase completed successfully"
           else
             echo "REBASE_SUCCESS=false" >> $GITHUB_ENV
             echo "Rebase failed - will attempt to resolve with OpenCode"
-            # DO NOT abort — leave conflict markers for OpenCode to resolve
+            git rebase --abort || true
             exit 0
           fi
 
       - name: Resolve conflicts with OpenCode
         if: env.REBASE_SUCCESS == 'false'
         id: opencode-resolve
-        continue-on-error: true
         uses: anomalyco/opencode/github@latest
         with:
           model: 'openrouter/openrouter/free'
           prompt: |
             A git rebase of dev onto main is IN PROGRESS with conflicts.
             Do NOT start a new rebase — the conflicts are already here.
-
             Please:
             1. Look at the conflicted files (git status, git diff)
             2. Resolve all conflict markers intelligently
             3. git add each resolved file
             4. Run git rebase --continue to proceed
             5. Repeat until the rebase completes
-
             Focus on:
             - Keeping changes from both branches when appropriate
             - Prioritizing main branch changes for structural/config files
             - Keeping dev branch changes for feature implementations
             - If a commit is already in main, skip it (git rebase --skip)
+            Ensure tests would pass after resolution
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -148,7 +156,6 @@ jobs:
         if: |
           (env.REBASE_SUCCESS == 'false' && env.OPENCODE_SUCCESS == 'false') || 
           (steps.tests.outcome == 'failure')
-        continue-on-error: true
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -171,6 +178,7 @@ jobs:
             Once resolved, the branch can be merged back into `dev`.
             
             ---
+            
             *This PR was automatically created by the sync-and-rebase workflow.*
           draft: true
 
@@ -178,7 +186,8 @@ jobs:
         if: always()
         run: |
           echo "=== Rebase Sync Status ==="
+          echo "Upstream repo: ${{ env.UPSTREAM_REPO }}"
           echo "Rebase success: ${{ env.REBASE_SUCCESS || 'N/A' }}"
           echo "OpenCode success: ${{ env.OPENCODE_SUCCESS || 'N/A' }}"
           echo "Tests outcome: ${{ steps.tests.outcome || 'N/A' }}"
-          echo "==========================="
+          echo "===========================
