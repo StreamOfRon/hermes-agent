@@ -47,15 +47,9 @@ jobs:
 
       - name: Sync main branch from upstream
         run: |
-          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
-          git fetch upstream main
-          git checkout main
-          if git merge --ff-only upstream/main; then
-            git push origin main
-          else
-            git rebase upstream/main
-            git push --force-with-lease origin main
-          fi
+          gh repo sync --branch main || true
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Attempt to rebase dev on main
         id: rebase
