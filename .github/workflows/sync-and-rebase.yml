@@ -62,6 +62,7 @@ jobs:
       - name: Resolve conflicts with OpenCode
         if: env.REBASE_SUCCESS == 'false'
         id: opencode-resolve
+        continue-on-error: true
         uses: anomalyco/opencode/github@latest
         with:
           model: 'openrouter/openrouter/free'
