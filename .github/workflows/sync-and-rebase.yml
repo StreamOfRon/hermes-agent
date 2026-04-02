@@ -19,10 +19,17 @@ on:
       upstream_repo:
         description: 'Upstream repository (e.g., owner/repo)'
         required: false
+<<<<<<< HEAD
         default: 'NousResearch/hermes-agent'
 
 env:
   UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'NousResearch/hermes-agent' }}
+=======
+        default: 'anomalyco/hermes-agent'
+
+env:
+  UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'anomalyco/hermes-agent' }}
+>>>>>>> aa00b299 (Add sync-and-rebase workflow for automated upstream sync)
 
 jobs:
   sync-and-rebase:
@@ -48,6 +55,7 @@ jobs:
       - name: Sync main branch from upstream
         run: |
           git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
+<<<<<<< HEAD
           git fetch upstream main
           git checkout main
           if git merge --ff-only upstream/main; then
@@ -56,6 +64,12 @@ jobs:
             git rebase upstream/main
             git push --force-with-lease origin main
           fi
+=======
+          git fetch upstream
+          git checkout main
+          git merge --ff-only upstream/main || git rebase upstream/main
+          git push origin main
+>>>>>>> aa00b299 (Add sync-and-rebase workflow for automated upstream sync)
 
       - name: Attempt to rebase dev on main
         id: rebase
@@ -80,6 +94,7 @@ jobs:
         with:
           model: 'openrouter/free'
           prompt: |
+<<<<<<< HEAD
             A git rebase of dev onto main is IN PROGRESS with conflicts.
             Do NOT start a new rebase — the conflicts are already here.
 
@@ -90,12 +105,25 @@ jobs:
             4. Run git rebase --continue to proceed
             5. Repeat until the rebase completes
 
+=======
+            Resolve the git rebase conflicts between the dev branch and main.
+            
+            Current repository has diverged. Please:
+            1. Start a rebase of dev on main
+            2. Resolve any merge conflicts intelligently
+            3. Ensure code compiles/runs correctly
+            4. Complete the rebase
+            
+>>>>>>> aa00b299 (Add sync-and-rebase workflow for automated upstream sync)
             Focus on:
             - Keeping changes from both branches when appropriate
             - Prioritizing main branch changes for structural/config files
             - Keeping dev branch changes for feature implementations
             - Ensuring tests would pass after resolution
+<<<<<<< HEAD
           continue-on-error: true
+=======
+>>>>>>> aa00b299 (Add sync-and-rebase workflow for automated upstream sync)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
