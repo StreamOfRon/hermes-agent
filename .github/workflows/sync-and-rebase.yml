@@ -15,6 +15,17 @@ on:
     - cron: '0 5 * * *'
       timezone: "America/Los_Angeles"
   workflow_dispatch:
+<<<<<<< HEAD
+=======
+    inputs:
+      upstream_repo:
+        description: 'Upstream repository (e.g., owner/repo)'
+        required: false
+        default: 'anomalyco/hermes-agent'
+
+env:
+  UPSTREAM_REPO: ${{ github.event.inputs.upstream_repo || 'anomalyco/hermes-agent' }}
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
 
 jobs:
   sync-and-rebase:
@@ -39,9 +50,17 @@ jobs:
 
       - name: Sync main branch from upstream
         run: |
+<<<<<<< HEAD
           gh repo sync --branch main || true
         env:
           GH_TOKEN: ${{ github.token }}
+=======
+          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
+          git fetch upstream
+          git checkout main
+          git merge --ff-only upstream/main || git rebase upstream/main
+          git push origin main
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
 
       - name: Attempt to rebase dev on main
         id: rebase
@@ -55,13 +74,18 @@ jobs:
           else
             echo "REBASE_SUCCESS=false" >> $GITHUB_ENV
             echo "Rebase failed - will attempt to resolve with OpenCode"
+<<<<<<< HEAD
             # DO NOT abort — leave conflict markers for OpenCode to resolve
+=======
+            git rebase --abort || true
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
             exit 0
           fi
 
       - name: Resolve conflicts with OpenCode
         if: env.REBASE_SUCCESS == 'false'
         id: opencode-resolve
+<<<<<<< HEAD
         continue-on-error: true
         uses: anomalyco/opencode/github@latest
         with:
@@ -77,11 +101,29 @@ jobs:
             4. Run git rebase --continue to proceed
             5. Repeat until the rebase completes
 
+=======
+        uses: anomalyco/opencode/github@latest
+        with:
+          model: 'openrouter/free'
+          prompt: |
+            Resolve the git rebase conflicts between the dev branch and main.
+            
+            Current repository has diverged. Please:
+            1. Start a rebase of dev on main
+            2. Resolve any merge conflicts intelligently
+            3. Ensure code compiles/runs correctly
+            4. Complete the rebase
+            
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
             Focus on:
             - Keeping changes from both branches when appropriate
             - Prioritizing main branch changes for structural/config files
             - Keeping dev branch changes for feature implementations
+<<<<<<< HEAD
             - If a commit is already in main, skip it (git rebase --skip)
+=======
+            - Ensuring tests would pass after resolution
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -93,12 +135,18 @@ jobs:
           # Check if we are still in a rebase state
           if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
             echo "OPENCODE_SUCCESS=false" >> $GITHUB_ENV
+<<<<<<< HEAD
             echo "Rebase still in progress after OpenCode — committing conflicted state for manual review"
             # Commit the conflicted state so we can push it for manual resolution
             git checkout dev
             git merge --no-commit --no-ff main || true
             git add -A
             git commit -m "WIP: rebase dev on main - conflicts need manual resolution" || true
+=======
+            echo "Rebase still in progress after OpenCode"
+            # Abort any partial rebase
+            git rebase --abort || true
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
           else
             # Check if dev is now based on main
             git checkout dev
@@ -148,7 +196,10 @@ jobs:
         if: |
           (env.REBASE_SUCCESS == 'false' && env.OPENCODE_SUCCESS == 'false') || 
           (steps.tests.outcome == 'failure')
+<<<<<<< HEAD
         continue-on-error: true
+=======
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -178,6 +229,10 @@ jobs:
         if: always()
         run: |
           echo "=== Rebase Sync Status ==="
+<<<<<<< HEAD
+=======
+          echo "Upstream repo: ${{ env.UPSTREAM_REPO }}"
+>>>>>>> cf858da3 (Add sync-and-rebase workflow for automated upstream sync)
           echo "Rebase success: ${{ env.REBASE_SUCCESS || 'N/A' }}"
           echo "OpenCode success: ${{ env.OPENCODE_SUCCESS || 'N/A' }}"
           echo "Tests outcome: ${{ steps.tests.outcome || 'N/A' }}"
